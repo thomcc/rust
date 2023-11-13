@@ -103,7 +103,7 @@ impl<'ll> CodegenCx<'ll, '_> {
     }
 
     pub fn const_bytes(&self, bytes: &[u8]) -> &'ll Value {
-        bytes_in_context(self.llcx, bytes)
+        bytes_in_context(self.llcx, bytes, NulTermination::No)
     }
 
     pub fn const_get_elt(&self, v: &'ll Value, idx: u64) -> &'ll Value {
@@ -195,7 +195,7 @@ impl<'ll, 'tcx> ConstMethods<'tcx> for CodegenCx<'ll, 'tcx> {
             .raw_entry_mut()
             .from_key(s)
             .or_insert_with(|| {
-                let sc = self.const_bytes(s.as_bytes());
+                let sc = bytes_in_context(self.llcx, s.as_bytes(), NulTermination::Auto);
                 let sym = self.generate_local_symbol_name("str");
                 let g = self.define_global(&sym, self.val_ty(sc)).unwrap_or_else(|| {
                     bug!("symbol `{}` is already defined", sym);
@@ -203,6 +203,7 @@ impl<'ll, 'tcx> ConstMethods<'tcx> for CodegenCx<'ll, 'tcx> {
                 unsafe {
                     llvm::LLVMSetInitializer(g, sc);
                     llvm::LLVMSetGlobalConstant(g, True);
+                    llvm::LLVMSetUnnamedAddress(g, llvm::UnnamedAddr::Global);
                     llvm::LLVMRustSetLinkage(g, llvm::Linkage::InternalLinkage);
                 }
                 (s.to_owned(), g)
@@ -325,10 +326,33 @@ pub fn val_ty(v: &Value) -> &Type {
     unsafe { llvm::LLVMTypeOf(v) }
 }
 
-pub fn bytes_in_context<'ll>(llcx: &'ll llvm::Context, bytes: &[u8]) -> &'ll Value {
+/// Nul-terminated strings may be deduplicated if they don't contain interior
+/// NULs and don't otherwise have unique addresses.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum NulTermination {
+    /// Nul-terminate if there is no interior nul.
+    #[default]
+    Auto,
+    /// Don't append a terminating nul
+    No,
+    /// Append a nul terminator.
+    #[allow(unused)] //
+    Yes,
+}
+
+pub fn bytes_in_context<'ll>(
+    llcx: &'ll llvm::Context,
+    bytes: &[u8],
+    nulterm: NulTermination,
+) -> &'ll Value {
+    let dont_nul_term = match nulterm {
+        NulTermination::Auto => core::ffi::CStr::from_bytes_with_nul(bytes).is_err(),
+        NulTermination::No => true,
+        NulTermination::Yes => false,
+    };
     unsafe {
         let ptr = bytes.as_ptr() as *const c_char;
-        llvm::LLVMConstStringInContext(llcx, ptr, bytes.len() as c_uint, True)
+        llvm::LLVMConstStringInContext(llcx, ptr, bytes.len() as c_uint, dont_nul_term as Bool)
     }
 }
 

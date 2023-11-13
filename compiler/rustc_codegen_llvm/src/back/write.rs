@@ -996,7 +996,7 @@ unsafe fn embed_bitcode(
         || cgcx.opts.target_triple.triple().starts_with("asmjs")
     {
         // We don't need custom section flags, create LLVM globals.
-        let llconst = common::bytes_in_context(llcx, bitcode);
+        let llconst = common::bytes_in_context(llcx, bitcode, common::NulTermination::No);
         let llglobal = llvm::LLVMAddGlobal(
             llmod,
             common::val_ty(llconst),
@@ -1008,8 +1008,8 @@ unsafe fn embed_bitcode(
         llvm::LLVMSetSection(llglobal, section.as_ptr().cast());
         llvm::LLVMRustSetLinkage(llglobal, llvm::Linkage::PrivateLinkage);
         llvm::LLVMSetGlobalConstant(llglobal, llvm::True);
-
-        let llconst = common::bytes_in_context(llcx, cmdline.as_bytes());
+        let llconst =
+            common::bytes_in_context(llcx, cmdline.as_bytes(), common::NulTermination::Auto);
         let llglobal = llvm::LLVMAddGlobal(
             llmod,
             common::val_ty(llconst),
